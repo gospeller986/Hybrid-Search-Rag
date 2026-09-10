@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p src/hybrid_search_rag)",
+      "Bash(mv src/api src/hybrid_search_rag/api)",
+      "Bash(mv src/generation src/hybrid_search_rag/generation)",
+      "Bash(mv src/ingestion src/hybrid_search_rag/ingestion)",
+      "Bash(mv src/storage src/hybrid_search_rag/storage)",
+      "Bash(mv src/retrieval src/hybrid_search_rag/retrieval)",
+      "Bash(touch src/hybrid_search_rag/retrieval/__init__.py)"
+    ]
+  }
+}

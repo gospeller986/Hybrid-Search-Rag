@@ -1,0 +1,27 @@
+[project]
+name = "hybrid-search-rag"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
+    "langchain-text-splitters>=1.1.2",
+    "pydantic-settings>=2.15.0",
+    "pymupdf>=1.28.2",
+    "sentence-transformers>=6.0.1",
+    "uvicorn>=0.52.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hybrid_search_rag"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
