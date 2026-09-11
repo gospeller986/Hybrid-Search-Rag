@@ -10,6 +10,7 @@ class SourceRef(BaseModel):
     source: str
     page_start: int
     page_end: int
+    text: str
 
 
 class QueryResponse(BaseModel):
