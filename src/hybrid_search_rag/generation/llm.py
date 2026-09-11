@@ -4,7 +4,7 @@ from collections.abc import Iterator
 import httpx
 
 from hybrid_search_rag.config import settings
-from hybrid_search_rag.retrieval import dense, fusion
+from hybrid_search_rag.retrieval import dense, fusion, rerank
 
 # Cosine distance (lower = closer) from the top dense match, above which we
 # treat the query as having no relevant content in the corpus at all. Chosen
@@ -88,11 +88,20 @@ def _has_relevant_context(query: str) -> bool:
     return bool(top_match) and top_match[0]["score"] <= MAX_RELEVANT_DISTANCE
 
 
+def _retrieve(query: str, n_results: int) -> list[dict]:
+    # Pull a wider candidate pool from fusion (matching fusion's own internal
+    # pool size) than we actually need, so the cross-encoder has a meaningful
+    # set to re-score and reorder — reranking a pool that's already trimmed
+    # to n_results would have nothing left to correct.
+    candidates = fusion.search(query, n_results=fusion.CANDIDATE_POOL)
+    return rerank.rerank(query, candidates, top_k=n_results)
+
+
 def answer(query: str, n_results: int = 5) -> dict:
     if not _has_relevant_context(query):
         return {"answer": NO_CONTEXT_ANSWER, "sources": []}
 
-    chunks = fusion.search(query, n_results=n_results)
+    chunks = _retrieve(query, n_results)
     response_text = _call_ollama(build_messages(query, chunks))
     return {"answer": response_text, "sources": _sources_for(chunks)}
 
@@ -105,5 +114,5 @@ def stream_answer(query: str, n_results: int = 5) -> tuple[list[dict], Iterator[
     if not _has_relevant_context(query):
         return [], iter([NO_CONTEXT_ANSWER])
 
-    chunks = fusion.search(query, n_results=n_results)
+    chunks = _retrieve(query, n_results)
     return _sources_for(chunks), _stream_ollama(build_messages(query, chunks))

@@ -60,6 +60,7 @@ below for a concrete example of why this matters, not just in theory.
 | Vector store | ChromaDB (persistent, embedded) |
 | Keyword search | `rank-bm25` (BM25Okapi) |
 | Fusion | Reciprocal Rank Fusion (hand-implemented) |
+| Re-ranking | Cross-encoder, `cross-encoder/ms-marco-MiniLM-L-6-v2` (local, no API key) |
 | LLM | `medgemma:4b` via Ollama (local, no API key) |
 
 Everything runs locally — no external API keys, no cloud services. This was a
@@ -77,7 +78,8 @@ src/hybrid_search_rag/
 ├── retrieval/
 │   ├── dense.py           — embeddings + Chroma similarity search
 │   ├── sparse.py          — BM25 keyword search
-│   └── fusion.py          — Reciprocal Rank Fusion of the two
+│   ├── fusion.py          — Reciprocal Rank Fusion of the two
+│   └── rerank.py          — cross-encoder re-scoring of the fused candidate pool
 ├── generation/
 │   └── llm.py             — prompt construction, relevance gating, Ollama calls
 ├── storage/
@@ -354,6 +356,40 @@ timing it against the real backend: sources arrived in 0.2s, the first token
 at ~3s (model load + prompt eval), and the full answer trickled in over
 several seconds rather than arriving all at once.
 
+### 11. Re-ranking: a cross-encoder second stage
+
+RRF's real blind spot (noted above) is that it only encodes *rank position*,
+never match *quality* — it can't tell "the best of several strong matches"
+apart from "the best of several weak ones." A cross-encoder re-ranker
+addresses this differently than the relevance gate does: rather than
+deciding whether to answer at all, it re-scores retrieval's candidate pool
+by feeding the query and each candidate chunk *jointly* through one model
+(`cross-encoder/ms-marco-MiniLM-L-6-v2`, via `sentence-transformers`'s
+`CrossEncoder` — already a dependency, so no new install), rather than
+comparing two independently-computed embedding vectors the way `dense.py`
+does. This is far more accurate at judging relevance, but too expensive to
+run over an entire corpus — exactly why it only runs on the ~20-candidate
+pool `fusion.search()` already narrowed things down to, not the full 210+
+chunk collection.
+
+We verified the model itself separates relevance cleanly before wiring it
+in: given one genuinely relevant chunk and one irrelevant one (a funding
+acknowledgment — the same chunk that, in early testing, once ranked #1 in
+plain dense search), the cross-encoder scored them 5.40 vs. -11.38. Wired
+into the pipeline (`generation/llm.py`'s `_retrieve()`), it pulls a
+20-candidate pool from fusion, then reranks down to the final `n_results`.
+On a real query, it kept fusion's top two picks in place (both had strong
+cross-method agreement already) but promoted two chunks up from deeper in
+the 20-candidate pool ahead of ones RRF had ranked higher — concrete
+evidence it's adding a genuinely different signal, not just reproducing
+fusion's own order.
+
+The relevance gate (decision 8) still runs *before* this stage and is
+unaffected by it — re-verified all three failure-mode test cases (a
+genuinely relevant query, the climate-change hallucination case, and the
+tricky in-domain-but-unanswerable dosage case) still behave correctly with
+reranking active.
+
 ---
 
 ## Known limitations
@@ -368,7 +404,14 @@ several seconds rather than arriving all at once.
 - **RRF has no tunable relevance floor of its own** — the relevance gate in
   `generation/llm.py` compensates for this at the generation layer, but
   `fusion.search()` itself will still return its "best available" chunks for
-  any query, however irrelevant.
+  any query, however irrelevant. Re-ranking (decision 11) improves *ordering*
+  among retrieved candidates but doesn't add a relevance floor either — it
+  will confidently order even an irrelevant pool, which is why the gate
+  still runs first and independently.
+- **Re-ranking adds real per-query latency** — a cross-encoder forward pass
+  per candidate in the pool (20 by default), on top of the dense/sparse/RRF
+  cost already paid. Not noticeable at this corpus size on CPU, but worth
+  knowing before scaling up `CANDIDATE_POOL` or the corpus significantly.
 - **Small local model (4B parameters)** is more prone to ignoring grounding
   instructions than a larger model would be — the relevance gate is a
   structural mitigation for the specific failure mode we found, not a
